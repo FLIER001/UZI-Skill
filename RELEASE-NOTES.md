@@ -1,60 +1,288 @@
 # Release Notes
 
-<<<<<<< HEAD
-## v2.10.8-hermes — 2026-04-18 (Hermes Agent 兼容适配 · 专属分支，不回灌 main)
+## v3.4.0 — 2026-05-10 (基金/ETF 持仓循环分析 + baostock ≥0.9.1)
 
-> **本版仅发布到 `hermes-compat` 分支**，main 保持 v2.10.7 不动 · Claude Code / Codex / Cursor 用户不受影响。
+> **用户反馈**："更新对基金和 ETF 的支持 · @所有人 请各位小伙伴升级 baostock API 至 v0.9.1"
+> **设计简化（关键）**："基金和 etf 很简单 · 你就搜索这个基金的持仓分析就行了 · 但是在使用前要提醒用户因为要搜索十个股票 · 可能时间和消耗会变大 · 需要他二次确认"
 
-### 背景
+### 1. 基金/ETF 持仓循环分析（新功能）
 
-Nous Research 的 Hermes Agent 原生支持从 GitHub 安装 skill（`tools/skills_hub.py::GitHubSource.fetch`），identifier 格式 `owner/repo/path/to/skill-dir`。本版让 UZI-Skill 4 个 skill 直接可被 `hermes skills install` 拉取。
-
-### 适配内容
-
-**1. 4 个 SKILL.md 加 `metadata.hermes` 字段**
-- `tags` + `related_skills` 便于 Hermes Hub 搜索
-- 3 个 satellite（investor-panel/lhb-analyzer/trap-detector）标 `requires: [deep-analysis]`
-
-**2. `skills/deep-analysis/requirements.txt`**
-- 从 repo 根复制（`hermes skills install` 只拉目标子目录，root requirements.txt 不来）
-
-**3. `run.py` 路径兼容**（additive · backward-compat）
-- 自动探测两种 layout：repo 根（`skills/deep-analysis/scripts/`） vs skill 目录（`scripts/`）
-- Claude Code / Codex 的 repo 根调用继续走原路径
-- Hermes 装到 `~/.hermes/skills/deep-analysis/` 后也能跑
-
-**4. SKILL.md 增 "First-run setup" 章节**
-- 指导 LLM 首次触发时自动跑 `pip install -r requirements.txt` 到 Hermes venv
-- 国内网络加清华镜像 fallback 提示
-
-**5. 新增 `INSTALL-HERMES.md`**
-- 3 种装法：原生 install（推荐）/ clone+symlink / branch 切换
-
-**6. README badge 加 "Hermes Compatible"**
-
-### 安装
+之前 ETF/LOF 直接 early-exit · 用户得手动复制 top 持仓股的代码再跑 10 次. v3.4.0 起：
 
 ```bash
-hermes skills install wbh604/UZI-Skill/skills/deep-analysis
+python run.py 510300.SH
+# → 显示 ETF 510300（沪深300）前 10 大持仓股 + 估算耗时
+# → 询问 y/N/数字
+# → 确认后循环跑 10 次 stock-analyze（resume cache 加速）
+# → 生成 fund-holdings-summary.html · 索引页链接 10 份子报告
 ```
 
-详见 [INSTALL-HERMES.md](INSTALL-HERMES.md)。
+**用户体验**：
+```
+📊 ETF 510300.SH · 持仓批量分析
+
+该基金前 10 大持仓：
+   1. 贵州茅台   (600519.SH)  占比 5.89%
+   2. 宁德时代   (300750.SZ)  占比 2.78%
+   3. 中国平安   (601318.SH)  占比 2.43%
+   ... (省略)
+
+⚠️  循环分析 10 只成分股 · 预计 约 40 分钟（按 depth=medium）
+
+继续？
+  y    = 跑全部 10 只
+  数字 = 只跑前 K 只（如输入 5 跑前 5）
+  N    = 取消（默认）
+```
+
+**安全设计**：
+- **二次确认**：默认取消 · 用户得显式输入 y / 数字
+- **数字限制**：可输入"5"只跑前 5 只 · 节约时间
+- **partial failure 容忍**：某只崩了不中断 · 其他继续 + summary 标失败
+- **CI / agent 模式**：`UZI_FUND_AUTO_YES=1` 跳过 prompt
+- **可转债 / 指数仍 early-exit**：只对 ETF/LOF 启用持仓分析
+
+**实现**：
+- `lib/fund_holdings_runner.py` (新 · 240 行) · 提示 + 循环 + 聚合
+- `run.py` · 检测 ETF/LOF 后调 runner（不再 early-exit）
+- 复用现有 stock pipeline · `resume=True` 让多次跑同一持仓能利用 cache
+
+### 2. baostock ≥0.9.1 锁版本（社群通知）
+
+社群通知：`2026-04-22 13:00 起 · 低于 v0.9.1 的版本将无法正常访问 baostock 数据服务`.
+
+**改动**：
+- `requirements.txt`: `baostock>=0.8.9` → **`baostock>=0.9.1`**
+- 验证：本地 baostock 0.9.1 实测 login + query 茅台 K 线全过 (10 行真实数据)
+
+**用户升级**：
+```bash
+pip install --upgrade baostock -i https://pypi.org/simple
+pip show baostock | grep Version  # 应显示 0.9.1+
+```
 
 ### 测试
 
-- 90 passed（原 88 + 无新增 Hermes 专项）
-- `run.py` 两种 layout 路径探测验证通过
-- 4 个 SKILL.md YAML frontmatter PyYAML 解析无错
+- 新增 `tests/test_v3_4_0_fund_holdings.py` (7 tests):
+  - runtime 估算
+  - 空持仓返 `no_holdings`
+  - 非交互 + 无 auto_yes → 取消（agent 必须显式确认）
+  - auto_yes 跑全部
+  - partial failure 容忍
+  - summary HTML 含子报告 link
+  - preflight ETF 路径正确
+- **总套件 362 tests 全过**（355 + 7 新）
+- 真机：`prepare_target('510300')` 拉真实持仓 · 茅台 5.89% top1
+- 真机 fund runner mocked end-to-end · summary HTML 生成正常
 
-### 不影响其他环境
+### 致谢
 
-| 环境 | 受影响 | 原因 |
-|---|---|---|
-| Claude Code (main) | ❌ | main 没动 |
-| Codex (main) | ❌ | main 没动 |
-| Cursor (main) | ❌ | main 没动 |
-| Hermes | ✅ 新支持 | 从 hermes-compat 分支装 |
-=======
+- 用户提出"基金/ETF 支持"需求 + 简化设计建议（不要 21 维特化 · 直接循环持仓）
+- 社群通知 baostock 升级要求
+
+---
+
+## v3.3.4 — 2026-05-10 (mini_racer V8 crash escape hatch · issue #61)
+
+> **用户反馈** (@dragonforai)：`python run.py SEHK.03690 --depth deep` →
+> `[FATAL:address_pool_manager.cc(67)] Check failed: !pool->IsInitialized()`
+
+### Bug #61 · mini_racer V8 isolate 双重初始化 SIGTRAP
+
+**症状**：macOS Python 3.12/3.13 下 · 跑 deep 模式（特别是 HK 港股）触发 V8 致命错误 · 整个 Python 进程被 SIGTRAP · 无法从 Python 层 `try/except` 捕获.
+
+**根因**：
+- `mini_racer` 是 V8 isolate 的 ctypes 封装
+- 已知用 mini_racer 的 akshare 函数：`stock_industry_pe_ratio_cninfo` / `stock_individual_fund_flow` / `stock_a_pe_and_pb`
+- v2.6 加了 `_MINI_RACER_LOCK` 串行化 · 但 macOS Py 3.12+ 下 V8 isolate pool 仍可能被多次初始化 (libffi cross-thread ctypes call 时序问题)
+- 进程级 SIGTRAP 不是 Python 异常 · `try/except` 抓不到
+
+### 修法 · 多重 escape hatch
+
+**Layer 1 · 显式禁用**:
+```bash
+UZI_DISABLE_MINI_RACER=1 python run.py SEHK.03690 --depth deep
+```
+3 个受影响 fetcher 直接 graceful 返 fallback · 报告其他 19 维正常生成.
+
+**Layer 2 · 自动恢复（核心）· Sentinel 文件机制**:
+1. 调 mini_racer fetcher 前 · 写 `~/.uzi-skill/_minirackercrash.sentinel`
+2. 调用成功后 · 删 sentinel
+3. **若进程被 SIGTRAP 杀掉 · sentinel 留在磁盘**
+4. 下次启动检测到 sentinel · 自动 disable mini_racer + 提示用户
+
+**Layer 3 · 强制启用（debug 用）**:
+```bash
+UZI_FORCE_MINI_RACER=1 python run.py ...   # 即使有 sentinel 也启用
+```
+
+### 用户体验
+
+第一次崩 → 看到 SIGTRAP 退出
+第二次跑 → 自动检测到 sentinel · 跳过 3 个 fetcher · 报告正常生成 + stderr 提示：
+```
+⚠️  检测到上次 mini_racer 崩溃记录 · 自动跳过 industry/capital_flow/valuation 中的 cninfo/lg 调用
+ℹ️  想重试 · `rm ~/.uzi-skill/_minirackercrash.sentinel` 或 `UZI_FORCE_MINI_RACER=1`
+```
+
+### 影响
+
+- legacy `run_real_test.run_fetcher` 和 `pipeline.collect._run` 都加了 disable 检查
+- 普通 Python 异常时 sentinel 会被清掉（区分于 V8 进程级 crash · 后者 sentinel 留下）
+- 报告里 `industry_pe_avg` / `main_flow_recent` / `pe 5 年分位` 字段会缺 · 但其他 19 维 + 21 评委 + DCF 仍完整
+
+### 回归测试
+
+新增 `tests/test_v3_3_4_minirackerguard.py` (7 tests):
+- `UZI_DISABLE_MINI_RACER=1` 跳过 fetcher
+- `UZI_FORCE_MINI_RACER=1` 覆盖 sentinel
+- Sentinel 自动 disable
+- arm/disarm lifecycle
+- 普通异常不留 sentinel（区分 V8 SIGTRAP）
+- 非 mini_racer fetcher 不受影响
+- pipeline.collect 也支持 disable env
+
+**总套件 355 tests 全过**（348 + 7 新）· 002217 e2e with `UZI_DISABLE_MINI_RACER=1`: 53s · 614 KB HTML.
+
+### 致谢
+
+- @dragonforai · #61 详细 stack trace 报告
+
+### 升级方法
+
+```bash
+hermes skills update wbh604/UZI-Skill/skills/deep-analysis
+# 或
+cd UZI-Skill && git pull
+```
+
+**碰到 mini_racer crash 的用户**：
+```bash
+# 方案 1：自动恢复（推荐 · 第一次崩之后第二次跑就自动绕过）
+python run.py SEHK.03690 --depth deep
+# 第一次会 SIGTRAP · 第二次会自动 skip 那 3 个 fetcher
+
+# 方案 2：直接显式禁用
+UZI_DISABLE_MINI_RACER=1 python run.py SEHK.03690 --depth deep
+```
+
+---
+
+## v3.3.3 — 2026-05-06 (社区 PR · 4 项 hotfix · #52 / #54 / #55 / #59)
+
+> **用户反馈**："请你检查 github pulls 里面他们提交的内容 · 如果效果 ok 并且没有 bug 的话可以合并"
+
+### 4 个社区 PR 处理
+
+| PR | 作者 | 决策 | 内容 |
+|---|---|---|---|
+| **#52** lhb akshare 日期 | @qdby26 | ✅ 直接合 | akshare 1.18+ 不接受 "近一月" 字符串 · 改 YYYYMMDD 日期循环 · 6 mock 测试 |
+| **#55** agent_analysis schema docs | @DragonQuix | ✅ 直接合 | 在 SKILL.md + commands/analyze-stock.md 文档化 12 条 validator 校验规则 |
+| **#54** svg_radar import | @DragonQuix | ⚠️ Cherry-pick | svg_sparkline 已在 v3.3.2 修 · svg_radar 是新缺的 · 手动应用 |
+| **#59** Python 3.11 + svg_radar | @Charlson852 | ⚠️ 部分采纳 | Py3.11 嵌套 f-string SyntaxError 真 bug 但原版有**严重缩进错误** (items.append 移出 for-loop 会让 7 流派只渲染 1 个) · 仅 cherry-pick 修复部分 + 加回归测试守护 |
+
+### #52 · LHB akshare 1.18+ 兼容（直接合并）
+
+`stock_lhb_stock_detail_em(symbol, date="近一月")` 在 akshare 1.18+ 触发 `TypeError: 'NoneType' object is not subscriptable` · 老 `except: return []` 静默吞异常 · 所有股票 `lhb_count_30d=0` · 龙虎榜模块永远跑不出数据.
+
+修法（@qdby26）：
+1. 用 `stock_lhb_stock_detail_date_em(symbol)` 拿历史上榜日
+2. 按 `days` 过滤
+3. 逐日调 `stock_lhb_stock_detail_em(symbol, date=YYYYMMDD)` (新格式)
+4. 列名归一化 `交易营业部名称 → 营业部名称` 让下游 `split_inst_vs_youzi` / `match_seats_in_lhb` 零改动
+
+### #54 + #59 · institutional.py + special_cards.py 修复
+
+**#54 svg_radar import**：v3.2 拆分时 `_render_competitive_analysis` 用了 `svg_radar` 但漏 import · Porter radar 永远 NameError → 静默返回空 → 报告里 BCG/Porter 块缺.
+
+**#59 Python 3.11 嵌套 f-string SyntaxError**:
+```python
+# 老 buggy 代码（Python 3.11 不允许 f-string 内反斜杠）
+f'  {f"· <span style=\"color:#9ca3af\">—{skip}</span>" if skip else ""}'
+# Fixed (PR #59 提议 + 我们采纳)
+skip_display = f'· <span style="color:#9ca3af">—{skip}</span>' if skip else ''
+f'  {skip_display}'
+```
+
+**为什么不直接合 PR #59**：原版把 `items.append` 从 for-loop **内部**（8 缩进）改到 for-loop **外面**（4 缩进）· 会导致 7 流派只渲染 1 个 G 量化派 · 其他 6 个全丢. 我们手工 cherry-pick 仅 skip_display 修复 · 保持 items.append 在 for-loop 内.
+
+### 回归测试
+
+- 新增 `tests/test_v3_3_3_pr_fixes.py` (5 tests)
+  - svg_radar import 检查
+  - Porter radar 实跑不抛 NameError
+  - skip_display 变量提取检查
+  - **关键回归**：7 流派必须全渲染（守护 PR #59 缩进 bug 不会重现）
+  - skip 显示边界
+- PR #52 自带 6 mock 回归测试（`test_lhb_date_format_fix.py`）
+- **总套件 348 tests 全过**（343 + 5 新）
+- 002217 真机 e2e 出 614 KB HTML
+
+### 致谢
+
+- @qdby26 · #52 LHB 日期格式修复 + 完整测试套
+- @DragonQuix · #54 + #55 institutional/docs 修复
+- @Charlson852 · #59 Python 3.11 兼容修复（虽然原版有 bug · 但思路对）
+
+### 升级方法
+
+```bash
+# Hermes
+hermes skills update wbh604/UZI-Skill/skills/deep-analysis
+
+# Claude Code
+/plugin update stock-deep-analyzer
+
+# CLI 直用
+cd UZI-Skill && git pull
+```
+
+---
+
+## v3.3.2 — 2026-04-28 (GitHub issue #50 + #51 hotfix)
+
+> **用户反馈**："请你检查 github 的 issue · 收集 bug 和他们反馈的修复方法 · 更新 skills"
+
+### Bug #50 · Stage 2 总是超时（NameError 根因）
+
+**症状**：用户 @chenxiang-bj 反馈 "Stage 2 总是超时" · 评论里 agent 已经诊断出根因.
+
+**根因**：v3.2 拆分 `assemble_report.py` → `lib/report/*` 时 · `institutional.py` 用了 `svg_sparkline` 但没加进 import 块（只 import 了 `svg_gauge` / `svg_progress_row`）。
+
+**触发**：跑到 `_render_lbo_block` · 当 `dim20.lbo.ebitda_path` 或 `debt_schedule` 非空时调用 `svg_sparkline(...)` → `NameError: name 'svg_sparkline' is not defined` → stage2 整个崩 → 用户看到的"超时"实际是异常静默吞了.
+
+**修法**：`lib/report/institutional.py` 加 `svg_sparkline` 到 import 行.
+
+### Bug #51 · XueQiu cubes_search.json endpoint 已下线
+
+**症状**：用户 @bilieebiliee1-design 反馈"XueQiu 登录成功但验证失败" · cookie 保存了但 `cubes_search.json` 仍 400.
+
+**根因**：XueQiu 把 `/cubes/cubes_search.json` 老 endpoint 完全下线.
+
+**社区修法（@Kylin824 评论）**：改用 `/query/v1/search/cube/stock.json?q={xq_symbol}&count={limit}&page=1`.
+
+**修法**：3 处同步换 endpoint
+- `lib/xueqiu_browser.py::LOGIN_TEST_URL` (登录验证)
+- `lib/xueqiu_browser.py::fetch_cubes_via_browser`
+- `fetch_contests.py::fetch_xueqiu_cubes` (HTTP 直访路径)
+
+### 回归测试
+
+新增 `tests/test_v3_3_2_issue_fixes.py` (5 tests)：
+- institutional 必须 import svg_sparkline
+- _render_lbo_block 实跑不抛 NameError
+- 3 处必须用新 endpoint
+
+**总套件 337 tests 全过**（332 + 5 新）· 002217 真机 e2e 78s 出 614 KB HTML.
+
+### 致谢
+
+- @chenxiang-bj · 报告 #50 + agent 诊断
+- @bilieebiliee1-design · 报告 #51
+- @Kylin824 · #51 提供新 endpoint URL
+
+---
+
 ## v3.3.1 — 2026-04-28 (Hermes 兼容回归修复)
 
 > **用户反馈**："UZI-Skill 是不是更新了不支持 hermes，之前的可以，现在开始报错了"
@@ -1582,7 +1810,6 @@ consensus = (bullish + NEUTRAL_WEIGHT * neutral) / max(active_count, 1) * 100
 ### 升级
 
 `git pull origin main` · 无数据迁移 · 已有 `.cache/` 继续生效。
->>>>>>> main
 
 ---
 

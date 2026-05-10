@@ -65,21 +65,91 @@ FETCHER_MAP = [
 #   - fetch_capital_flow → ak.stock_individual_fund_flow (em fund flow)
 #   - fetch_valuation → ak.stock_a_pe_and_pb (lg)
 # 给这些 fetcher 加共享锁，强制串行化，其他 fetcher 仍并行。
+#
+# v3.3.4 · issue #61 · macOS Python 3.12/3.13 + mini_racer 0.x 即使串行化仍可能
+# 在 V8 isolate pool 双重初始化时 SIGTRAP（"address_pool_manager.cc Check failed"）·
+# 用户可设 `UZI_DISABLE_MINI_RACER=1` env var 完全跳过这 3 个 fetcher · graceful 降级
+# (industry_pe / fund_flow / a_pe_and_pb 字段会缺 · 但报告其余 19 维仍正常生成)
 import threading as _threading
 _MINI_RACER_FETCHERS = {"fetch_industry", "fetch_capital_flow", "fetch_valuation"}
 _MINI_RACER_LOCK = _threading.Lock()
 
 
+_MINI_RACER_SENTINEL = Path.home() / ".uzi-skill" / "_minirackercrash.sentinel"
+
+
+def _mini_racer_disabled() -> bool:
+    """v3.3.4 · 多重判断是否禁用 mini_racer.
+
+    1. 显式 env var `UZI_DISABLE_MINI_RACER=1` → disable
+    2. `UZI_FORCE_MINI_RACER=1` → force enable (overrides sentinel)
+    3. sentinel 文件存在（上次 crash 留下）→ auto-disable + 提示
+    """
+    if os.environ.get("UZI_DISABLE_MINI_RACER") == "1":
+        return True
+    if os.environ.get("UZI_FORCE_MINI_RACER") == "1":
+        return False
+    if _MINI_RACER_SENTINEL.exists():
+        # auto-recovery：上次 mini_racer 崩过 · 本次自动 skip
+        # 用户想重试可 `rm ~/.uzi-skill/_minirackercrash.sentinel` 或 UZI_FORCE_MINI_RACER=1
+        if not getattr(_mini_racer_disabled, "_warned", False):
+            print(
+                f"   ⚠️  检测到上次 mini_racer 崩溃记录 · 自动跳过 industry/capital_flow/valuation 中的 cninfo/lg 调用",
+                file=sys.stderr,
+            )
+            print(
+                f"   ℹ️  想重试 · `rm {_MINI_RACER_SENTINEL}` 或 `UZI_FORCE_MINI_RACER=1`",
+                file=sys.stderr,
+            )
+            _mini_racer_disabled._warned = True  # 避免重复打印
+        return True
+    return False
+
+
+def _arm_mini_racer_sentinel(module_name: str) -> None:
+    """v3.3.4 · 调 mini_racer fetcher 前写 sentinel · 若崩则下次启动检测到."""
+    try:
+        _MINI_RACER_SENTINEL.parent.mkdir(parents=True, exist_ok=True)
+        _MINI_RACER_SENTINEL.write_text(
+            f"{time.time()}|{module_name}\n", encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
+def _disarm_mini_racer_sentinel() -> None:
+    """v3.3.4 · 调 mini_racer fetcher 成功后删 sentinel."""
+    try:
+        if _MINI_RACER_SENTINEL.exists():
+            _MINI_RACER_SENTINEL.unlink()
+    except Exception:
+        pass
+
+
 def run_fetcher(module_name: str, args: tuple) -> dict:
+    # v3.3.4 · issue #61 · 多重保护 mini_racer 崩溃
+    if module_name in _MINI_RACER_FETCHERS and _mini_racer_disabled():
+        return {
+            "data": {"_disabled": "mini_racer skipped (env / sentinel)"},
+            "source": f"{module_name} (skipped)",
+            "fallback": True,
+            "error": "mini_racer disabled · crashes V8 on macOS Py 3.12/3.13",
+        }
     try:
         mod = __import__(module_name)
         if module_name in _MINI_RACER_FETCHERS:
             with _MINI_RACER_LOCK:
+                # v3.3.4 · 调用前埋 sentinel · 若进程崩 sentinel 留着 · 下次启动 auto-disable
+                _arm_mini_racer_sentinel(module_name)
                 result = mod.main(*args)
+                _disarm_mini_racer_sentinel()
         else:
             result = mod.main(*args)
         return result if isinstance(result, dict) else {"data": result}
     except Exception as e:
+        # 普通 Python 异常 · sentinel 不留（说明只是逻辑错 · 非 V8 crash）
+        if module_name in _MINI_RACER_FETCHERS:
+            _disarm_mini_racer_sentinel()
         traceback.print_exc(file=sys.stderr)
         return {"data": {}, "source": module_name, "fallback": True, "error": f"{type(e).__name__}: {e}"}
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import datetime, timedelta
 from typing import Any
 
 from .cache import (
@@ -1008,11 +1009,48 @@ def fetch_lhb_recent(ti: TickerInfo, days: int = 30) -> list[dict]:
 
 
 def _fetch_lhb_impl(ti: TickerInfo, days: int) -> list[dict]:
+    """Fetch seat-level LHB records for the past N days.
+
+    akshare 1.18+ broke the ``date="近一月"/"近三月"`` shortcuts on
+    ``stock_lhb_stock_detail_em`` (returns ``None`` → silent empty result).
+    We now enumerate the stock's actual on-board dates via
+    ``stock_lhb_stock_detail_date_em`` and iterate each date with the
+    ``YYYYMMDD`` format that the API still accepts.
+
+    The ``交易营业部名称`` column is renamed to ``营业部名称`` so the
+    downstream consumers (``fetch_lhb.py::split_inst_vs_youzi`` and
+    ``lib/seat_db.py::match_seats_in_lhb``) keep working unchanged.
+    """
     try:
-        df = ak.stock_lhb_stock_detail_em(symbol=ti.code, date="近一月" if days <= 30 else "近三月")
-        return df.to_dict("records") if df is not None else []
+        dates_df = ak.stock_lhb_stock_detail_date_em(symbol=ti.code)
     except Exception:
         return []
+    if dates_df is None or dates_df.empty or "交易日" not in dates_df.columns:
+        return []
+
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    dates: list[str] = []
+    for d in dates_df["交易日"].astype(str):
+        d10 = d[:10]  # "2026-04-17" or "2026-04-17 00:00:00" → take first 10
+        if d10 >= cutoff:
+            dates.append(d10.replace("-", ""))
+
+    all_records: list[dict] = []
+    for dt in dates:
+        try:
+            df = ak.stock_lhb_stock_detail_em(symbol=ti.code, date=dt)
+        except Exception:
+            continue
+        if df is None or df.empty:
+            continue
+        # Normalize seat column name for downstream consumers
+        for legacy in ("交易营业部名称", "交易营业部"):
+            if legacy in df.columns and "营业部名称" not in df.columns:
+                df = df.rename(columns={legacy: "营业部名称"})
+                break
+        df["上榜日"] = dt
+        all_records.extend(df.to_dict("records"))
+    return all_records
 
 
 # ─────────────────────────────────────────────────────────────

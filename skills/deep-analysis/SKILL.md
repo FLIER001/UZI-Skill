@@ -468,6 +468,20 @@ genuine investment analysis. The whole point of this plugin is agent-driven judg
 3. 用 agent 的判断覆盖 panel.json 中的 headline/reasoning/score
 4. **写 `agent_analysis.json`** 到 `.cache/{ticker}/` — 这是闭环的关键！
 
+**agent_analysis.json 必填字段（缺字段 stage2 会 schema warning/error）：**
+
+| 字段 | 要求 | 触发校验 |
+|---|---|---|
+| `agent_reviewed` | 必须 `true` | ⚠️ 缺 → warning |
+| `dim_commentary` | 至少 5 个维度，**每条 ≥20 字**（引用具体数字，禁止空泛） | 🔴 <20 字 → warning |
+| `panel_insights` | **≥30 字**，评委投票分布 + 多空分歧分析 | ⚠️ <30 字 → warning |
+| `great_divide_override` | punchline(≥10 字) + bull_say_rounds(≥3 条) + bear_say_rounds(≥3 条) | 🔴 缺字段 → error |
+| `narrative_override.core_conclusion` | **≥20 字**综合定论 | ⚠️ <20 字 → warning |
+| `narrative_override.risks` | **≥3 条**风险 | ⚠️ <3 条 → warning |
+| `narrative_override.buy_zones` | **必须含 value/growth/technical/youzi 四个 key**，每个 key 内含 `price`(数值) + `rationale`(≥5 字解释) | 🔴 缺 key → error / ⚠️ 缺子字段 → warning |
+| `qualitative_deep_dive` | 覆盖 3_macro/7_industry/8_materials/9_futures/13_policy/15_events 共 6 维。每维含：`evidence` 数组（≥2 条 `{source, url, finding, retrieved_at}`）、`associations` 跨域因果链（**6 维合计 ≥3 条** `{link_to, chain_id, causal_chain, estimated_impact}`）、`conclusion`（1-2 句）。详见 `references/task2.5-qualitative-deep-dive.md` 第 5 节 | 🔴 evidence 非 list → error / ⚠️ associations<3 → warning |
+| `data_gap_acknowledged` | v2.3+ 推荐。dict 格式 `{"dim_key": "已尝试 X 但失败的原因"}`。标记数据采集失败但 agent 已知晓的维度，HTML 报告显示 ⚠️ 橙色徽章而非空白 | 🔴 类型非 dict → error |
+
 #### agent_analysis.json 格式
 
 ```json

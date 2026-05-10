@@ -1,9 +1,5 @@
 {
-<<<<<<< HEAD
-  "version": "2.10.8",
-=======
-  "version": "3.3.1",
->>>>>>> main
+  "version": "3.4.0",
   "files": [
     ".claude-plugin/plugin.json",
     ".cursor-plugin/plugin.json",

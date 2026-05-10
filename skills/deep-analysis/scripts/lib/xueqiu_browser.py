@@ -29,7 +29,9 @@ from pathlib import Path
 PROFILE_DIR = Path.home() / ".uzi-skill" / "playwright-xueqiu"
 COOKIE_FILE = PROFILE_DIR / "cookies.json"
 LOGIN_URL = "https://xueqiu.com/"
-LOGIN_TEST_URL = "https://xueqiu.com/cubes/cubes_search.json?code=SH600519&category=2&count=1&page=1"
+# v3.3.2 · issue #51 · 老 cubes_search.json 已下线 · 用社区反馈的新 endpoint
+# 致谢：@Kylin824 · 报告原 endpoint 失效 + 提供新 URL 模式
+LOGIN_TEST_URL = "https://xueqiu.com/query/v1/search/cube/stock.json?q=SH600519&count=1&page=1"
 
 
 def is_login_enabled() -> bool:
@@ -103,7 +105,7 @@ def _interactive_login() -> bool:
             ok = False
 
         if not ok:
-            print("⚠️  登录验证失败 — cubes_search.json 仍返回错误。")
+            print("⚠️  登录验证失败 — query/v1/search/cube/stock.json 仍返回错误。")
             print("   可能：(a) 实际未登录成功 (b) 该接口仍有反爬。Cookie 仍会被保存以便重试。")
 
         _save_cookies(browser_ctx)
@@ -147,8 +149,12 @@ def fetch_with_browser(url: str, timeout: int = 15) -> str | None:
 
 
 def fetch_cubes_via_browser(xq_symbol: str, limit: int = 50) -> list[dict]:
-    """Fetch xueqiu cubes through authenticated Playwright. Empty list on any failure."""
-    url = f"https://xueqiu.com/cubes/cubes_search.json?code={xq_symbol}&category=2&count={limit}&page=1"
+    """Fetch xueqiu cubes through authenticated Playwright. Empty list on any failure.
+
+    v3.3.2 · issue #51 fix · 老 cubes_search.json endpoint 已下线 ·
+    改用 query/v1/search/cube/stock.json (社区 @Kylin824 反馈).
+    """
+    url = f"https://xueqiu.com/query/v1/search/cube/stock.json?q={xq_symbol}&count={limit}&page=1"
     text = fetch_with_browser(url, timeout=20)
     if not text:
         return []

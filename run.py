@@ -408,7 +408,23 @@ def main():
     elif is_chinese_name(args.ticker) and not args.force_name:
         stage1_result = _stage1(args.ticker)
         # v2.10.4 · ETF/指数/可转债早退：stage1 已写 _resolve_error.json + 成分股清单
+        # v3.4.0 · ETF/LOF 改为持仓循环分析（用户二次确认）
         if isinstance(stage1_result, dict) and stage1_result.get("status") == "non_stock_security":
+            sec_type = stage1_result.get("security_type", "")
+            if sec_type in ("etf", "lof") and stage1_result.get("top_holdings"):
+                print(f"\n💡 {args.ticker} 是 {stage1_result.get('label', sec_type.upper())} · v3.4.0 起支持循环分析持仓股")
+                from lib.fund_holdings_runner import confirm_and_run_holdings
+                auto_yes = os.environ.get("UZI_FUND_AUTO_YES") == "1"
+                fund_result = confirm_and_run_holdings(
+                    stage1_result.get("ticker", args.ticker),
+                    stage1_result.get("label", "ETF/LOF"),
+                    stage1_result["top_holdings"],
+                    depth=os.environ.get("UZI_DEPTH", "medium"),
+                    auto_yes=auto_yes,
+                )
+                if fund_result.get("status") == "completed":
+                    print(f"\n✅ 持仓批量分析完成 · 汇总报告: {fund_result['summary_html']}")
+                sys.exit(0)
             print(f"\n{'━' * 50}")
             print(f"🔴 {args.ticker} 是 {stage1_result.get('label', '非个股标的')}，已跳过 stage2。")
             print(f"   请选择上面列出的成分股之一重跑。")
@@ -455,16 +471,42 @@ def main():
                 args.ticker = resolved
     else:
         result = run_analysis(args.ticker)
-        # v2.10.4 · ETF/指数/可转债早退（stage1 已输出成分股清单，不生成报告）
+        # v2.10.4 · ETF/指数/可转债早退（stage1 已输出成分股清单）
+        # v3.4.0 · ETF/LOF 不再早退 · 改为询问用户是否循环分析持仓
         if isinstance(result, dict) and result.get("status") in ("non_stock_security", "name_not_resolved"):
             print(f"\n{'━' * 50}")
             status = result.get("status")
             if status == "non_stock_security":
-                print(f"🔴 {args.ticker} 是 {result.get('label', '非个股标的')}，已跳过 stage2。")
-                if result.get("top_holdings"):
-                    print(f"   请从上方列出的成分股里选一只重跑，例如：python run.py {result['top_holdings'][0]['code']}")
+                sec_type = result.get("security_type", "")
+                # v3.4.0 · ETF/LOF 走持仓循环分析（用户二次确认）· 可转债 / 指数仍 early-exit
+                if sec_type in ("etf", "lof") and result.get("top_holdings"):
+                    print(f"💡 {args.ticker} 是 {result.get('label', sec_type.upper())} · v3.4.0 起支持循环分析持仓股")
+                    print(f"{'━' * 50}")
+                    from lib.fund_holdings_runner import confirm_and_run_holdings
+                    auto_yes = os.environ.get("UZI_FUND_AUTO_YES") == "1"
+                    fund_result = confirm_and_run_holdings(
+                        args.ticker, result.get("label", "ETF/LOF"),
+                        result["top_holdings"],
+                        depth=os.environ.get("UZI_DEPTH", "medium"),
+                        auto_yes=auto_yes,
+                    )
+                    if fund_result.get("status") == "completed":
+                        print(f"\n✅ 持仓批量分析完成 · 汇总报告: {fund_result['summary_html']}")
+                        # 报告路径设为 summary html 让后续 cloudflare/browser 能打开
+                        from pathlib import Path as _P
+                        summary_path = _P(fund_result["summary_html"])
+                        if summary_path.is_absolute():
+                            args._fund_summary_path = summary_path
+                        else:
+                            args._fund_summary_path = (SCRIPTS_DIR / summary_path).resolve()
+                    sys.exit(0)
                 else:
-                    print(f"   {result.get('what_to_do', '请改用个股代码重跑。')}")
+                    # 可转债 / 指数 / 拉不到持仓 · 仍 early-exit
+                    print(f"🔴 {args.ticker} 是 {result.get('label', '非个股标的')}，已跳过 stage2。")
+                    if result.get("top_holdings"):
+                        print(f"   请从上方列出的成分股里选一只重跑，例如：python run.py {result['top_holdings'][0]['code']}")
+                    else:
+                        print(f"   {result.get('what_to_do', '请改用个股代码重跑。')}")
             else:
                 print(f"🔴 {args.ticker} 股票名无法解析")
             print(f"{'━' * 50}")

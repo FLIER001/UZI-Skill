@@ -7,6 +7,132 @@
 
 ---
 
+## v3.4.0 (2026-05-10 · 基金/ETF 持仓循环分析 + baostock ≥0.9.1)
+
+### FEATURE · ETF/LOF 持仓循环分析（v2.10.4 early-exit 改为 opt-in 批量）
+- **背景**：v2.9.2 引入 ETF/LOF 早退（避免对非个股标的跑 51 评委）· 但用户期望"分析整只 ETF" · 之前手动跑 10 次 stock-analyze 太麻烦
+- **位置**：`lib/fund_holdings_runner.py`（新）+ `run.py`（两处分支接入 runner）
+- **用户体验**：检测到 ETF/LOF → 列持仓 + 估算耗时 → 二次确认（y / 数字 / N） → 循环跑 stock-analyze + 生成 summary HTML
+- **安全设计**：
+  - 默认取消（除非用户输入 y）
+  - 数字输入只跑前 K 只
+  - 单只崩不中断（partial failure 容忍）
+  - 非交互环境必须 `UZI_FUND_AUTO_YES=1` 显式确认
+  - 可转债 / 指数仍 early-exit · 只对 ETF/LOF 启用
+- **回归测试**：`tests/test_v3_4_0_fund_holdings.py` (7 tests · runtime 估算 / 取消 / auto_yes / partial failure / summary HTML 链接)
+- **未来改该区域注意事项**：
+  - **不要把 ETF/LOF pipeline 强行塞进主 22 维 stock pipeline** · 它们没有 ROE/护城河字段 · 这次设计意在循环复用 stock pipeline 而不是新建 fund pipeline
+  - 默认取消逻辑必须保留 · 否则 agent 误传 ETF 会循环 10 次浪费 token
+  - `UZI_FUND_AUTO_YES=1` 应用于 CI / agent 编排场景 · 不要默认开启
+  - top_holdings 必须有 rank/code/name 三个字段 · weight_pct 可选
+
+### CONFIG · baostock 锁版本 ≥0.9.1
+- **背景**：社群通知 2026-04-22 起 baostock 服务端要求 ≥0.9.1
+- **位置**：`requirements.txt`
+- **修法**：`baostock>=0.8.9` → `baostock>=0.9.1`
+- **验证**：本地 0.9.1 实测 login + 茅台 K 线 query 全过
+- **未来改该区域注意事项**：baostock 服务端版本要求未来可能继续上调 · 看到 login() 大面积失败时优先升 baostock
+
+---
+
+## v3.3.4 (2026-05-10 · mini_racer V8 crash escape hatch · issue #61)
+
+### BUG #61 · macOS Py 3.12/3.13 下 mini_racer V8 SIGTRAP（@dragonforai）
+- **症状**：`python run.py SEHK.03690 --depth deep` → `[FATAL:address_pool_manager.cc(67)] Check failed: !pool->IsInitialized()` · Python 进程被 SIGTRAP 杀掉
+- **位置**：`run_real_test.run_fetcher` (legacy 路径) + `lib/pipeline/collect.py::_run` (pipeline 路径)
+- **根因**：
+  - `mini_racer` 是 V8 isolate 的 ctypes 封装 · 非进程内 thread-safe
+  - v2.6 加 `_MINI_RACER_LOCK` 串行化 · 但 macOS Python 3.12+ 下 libffi cross-thread ctypes call 时序仍可能让 V8 isolate pool 被多次初始化
+  - SIGTRAP 是进程级 signal · Python `try/except` 抓不到 · 整个 process 被 kill
+- **影响**：HK 港股 + deep 模式特别容易触发（因为 deep 启用更多 fetcher · 增加 mini_racer 调用频次）· 用户无法生成报告
+- **修法**（多重 layer）：
+  1. **显式 escape hatch**：`UZI_DISABLE_MINI_RACER=1` env var · 跳过 3 个 fetcher graceful 降级
+  2. **自动恢复**（核心创新）：sentinel 文件机制
+     - 调 mini_racer fetcher 前写 `~/.uzi-skill/_minirackercrash.sentinel`
+     - 成功后删
+     - 进程崩则 sentinel 留下 · 下次启动自动 disable
+  3. **强制启用**：`UZI_FORCE_MINI_RACER=1` 覆盖 sentinel（debug 用）
+  4. legacy + pipeline 两条路径都做了同样保护
+- **验证**：UZI_DISABLE_MINI_RACER=1 e2e 跑通 · 614 KB HTML 仍生成
+- **回归测试**：`tests/test_v3_3_4_minirackerguard.py` (7 tests)
+- **未来改该区域注意事项**：
+  - 不要试图用 Python `try/except` 抓 V8 SIGTRAP · 抓不到（进程级 signal）
+  - sentinel 文件路径在 `~/.uzi-skill/_minirackercrash.sentinel` · 不要改路径
+  - 调 mini_racer fetcher 时 **必须先 arm sentinel** · 成功后 disarm · 否则 auto-recovery 失效
+  - 普通 Python 异常时也要 disarm sentinel · 否则误判 V8 crash 让用户每次都跑 fallback
+  - **加新的 mini_racer 触发函数时**（akshare 升级可能引入更多 V8 调用）· 务必加进 `_MINI_RACER_FETCHERS` 集合
+  - 长期方案：考虑用 subprocess 隔离 mini_racer call · 或换 cninfo HTTP API 不依赖 mini_racer
+
+---
+
+## v3.3.3 (2026-05-06 · 社区 PR · 4 项 hotfix)
+
+### BUG #52 · LHB akshare 1.18+ "近一月" 字符串失效（@qdby26）
+- **症状**：所有股票 `lhb_count_30d=0` / `matched_youzi=[]` / `inst_vs_youzi` 全 0 · 龙虎榜模块永远空
+- **位置**：`lib/data_sources.py::_fetch_lhb_impl`
+- **根因**：akshare 1.18+ 改了 API · `stock_lhb_stock_detail_em(symbol, date="近一月")` 返 `None` → `TypeError` → `except: return []` 静默吞掉
+- **修法**：用 `stock_lhb_stock_detail_date_em` 拿历史日期 + 按 days 过滤 + 逐日调 YYYYMMDD 格式 + 列名归一化 `交易营业部名称 → 营业部名称`
+- **验证**：6 mock 回归测试全过
+- **未来改该区域注意事项**：
+  - akshare 任何字符串简写参数（"近 X 月" / "今年" / "全部"）都不可信 · 优先用 YYYYMMDD/YYYY-MM-DD 数值格式
+  - `except Exception: return []` 这种静默吞异常的写法是 anti-pattern · 必须至少 print warning
+
+### BUG #54 · institutional.py 缺 svg_radar import（@DragonQuix）
+- **症状**：报告里 BCG/Porter 5 forces 块缺失（_render_competitive_analysis 静默返空）
+- **位置**：`lib/report/institutional.py:393`
+- **根因**：v3.2 拆分时只 import 了 `svg_gauge / svg_progress_row` · 漏了 `svg_radar`（v3.3.2 已修过 svg_sparkline · 但忘了 svg_radar）
+- **修法**：import 块加 `svg_radar`
+- **验证**：`test_institutional_imports_svg_radar` + `test_render_competitive_analysis_does_not_raise_nameerror`
+- **未来改该区域注意事项**：
+  - **任何 lib/report/* 子模块用的 svg_* 函数必须 import** · v3.2 拆分时漏了 svg_sparkline (修过 #50) 又漏了 svg_radar · 已加回归测试守护 · 若再加 svg_xxx 也要更新 import
+  - 推荐：CI 加 `python -c "from lib.report.institutional import *; ar.assemble('TEST.SH')"` 烟雾测试
+
+### BUG #59 · Python 3.11 嵌套 f-string 反斜杠 SyntaxError（@Charlson852）
+- **症状**：Python 3.11 import `lib.report.special_cards` 直接 `SyntaxError: f-string expression part cannot include a backslash`
+- **位置**：`lib/report/special_cards.py::render_school_scores` · 第 500 行
+- **根因**：Python 3.11 不允许 f-string 表达式部分有反斜杠 · `f"{f'...\\\"...\\\"...' if skip else ''}"` 这种嵌套 f-string + 反斜杠 attr 引号会触发 SyntaxError（Python 3.12+ 才允许）
+- **影响**：所有 Python 3.11 用户（Debian 13 默认）完全无法 import · stage2 全崩
+- **修法**：把内嵌 f-string 提取为独立变量 `skip_display` · 主 f-string 只插入变量 (无反斜杠)
+- **PR #59 原版 bug 警告**：作者修这个的同时把 `items.append(...)` 从 for-loop **内**（8 缩进）错移到 for-loop **外**（4 缩进）· 会导致 7 流派只渲染最后一个 · 我们 cherry-pick 仅修复部分 · 保持原缩进
+- **验证**：`test_school_scores_uses_skip_display_variable` + `test_render_school_scores_renders_all_seven_groups`
+- **未来改该区域注意事项**：
+  - **永远不要在 f-string 表达式部分用反斜杠**（即使 Python 3.12+ 允许 · 也会让 3.11 崩）· 把 HTML 等需要引号的部分提取为独立变量
+  - 重写 render_school_scores 时 · `items.append` **必须**在 for-loop 内 · 否则只渲染最后一个流派 · `test_render_school_scores_renders_all_seven_groups` 守护这条
+  - 缩进改动看似无害但语义巨变 · review PR 时关注控制流缩进
+
+---
+
+## v3.3.2 (2026-04-28 · GitHub issue #50 + #51 hotfix)
+
+### BUG #50 · institutional.py 漏 import svg_sparkline · NameError 卡死 stage2
+- **症状**：用户报"Stage 2 总是超时"· 实际是 `NameError: name 'svg_sparkline' is not defined`
+- **位置**：`lib/report/institutional.py:211-212` · `_render_lbo_block` 函数内
+- **根因**：v3.2 拆分时 institutional.py 的 import 块只列 `svg_gauge / svg_progress_row` · 漏了 svg_sparkline · 但 _render_lbo_block 实际调用了它
+- **触发条件**：dim20.lbo.ebitda_path 或 debt_schedule 非空时（绝大多数股票都会触发）
+- **影响**：stage2 整个崩 · HTML 不出 · 用户感知"卡住超时"
+- **修法**：import 块加 `svg_sparkline`
+- **验证**：手动构造 dim20 跑 _render_lbo_block · 应生成 2 个 SVG sparkline
+- **回归测试**：`tests/test_v3_3_2_issue_fixes.py::test_institutional_imports_svg_sparkline` + `test_render_lbo_block_does_not_raise_nameerror`
+- **未来改该区域注意事项**：
+  - 任何在 lib/report/* 子模块用的 SVG 函数必须在文件顶部 import block 显式列出
+  - v3.2 拆分时容易漏 import · 抽块前先 grep 该块用了哪些函数 · 全部加进 import 列表
+  - 推荐：每个新 lib/report/*.py 文件都在 CI 跑 `python -c "import lib.report.X"` 烟雾测试
+
+### BUG #51 · XueQiu cubes_search.json endpoint 已下线
+- **症状**：用户报"XueQiu 登录成功但验证失败" · cookie 已保存但 endpoint 仍 400
+- **位置**：`lib/xueqiu_browser.py:32` (LOGIN_TEST_URL) · `lib/xueqiu_browser.py::fetch_cubes_via_browser` · `fetch_contests.py::fetch_xueqiu_cubes`
+- **根因**：XueQiu 把 `/cubes/cubes_search.json` endpoint 完全下线 · 未保留兼容
+- **社区修法**：@Kylin824 提供新 URL `/query/v1/search/cube/stock.json?q={xq_symbol}&count={limit}&page=1`
+- **修法**：3 处同步换新 endpoint
+- **验证**：grep 项目无 `cubes/cubes_search.json` API 调用残留
+- **回归测试**：`test_xueqiu_login_url_uses_new_endpoint` + `test_xueqiu_browser_fetch_uses_new_endpoint` + `test_fetch_contests_uses_new_endpoint`
+- **未来改该区域注意事项**：
+  - XueQiu API 不稳定 · 历史上多次改 endpoint · 任何报登录验证失败时优先怀疑 endpoint 失效
+  - 改 LOGIN_TEST_URL 必须同步 fetch_cubes_via_browser 和 fetch_contests · 三处保持一致
+  - `query/v1/search/cube/stock.json` 参数是 `q=` 不是 `code=` · category 参数也已废弃
+
+---
+
 ## v3.2.0 (2026-04-23 · assemble_report.py 拆分 80%)
 
 ### REFACTOR · assemble_report.py 从 2964 → 587 行

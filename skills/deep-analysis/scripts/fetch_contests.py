@@ -64,6 +64,7 @@ def fetch_xueqiu_cubes(ti, limit: int = 50) -> tuple[list[dict], dict]:
     """Returns (cubes, meta) where meta has {http_status, source, login_required}.
 
     v2.7.1: 2026 起 cubes_search.json 强制登录（HTTP 400 + error_code 400016）。
+    v3.3.2: 老 cubes_search.json 完全下线 (issue #51) · 改用 query/v1/search/cube/stock.json (@Kylin824 反馈).
     流程：
     1. 先试 HTTP 直访（无登录） — 仍存活的旧版本可能能用
     2. 失败 → 检查 UZI_XQ_LOGIN 是否启用
@@ -72,7 +73,7 @@ def fetch_xueqiu_cubes(ti, limit: int = 50) -> tuple[list[dict], dict]:
     """
     sess = _xq_session()
     symbol = _xq_symbol(ti)
-    url = f"https://xueqiu.com/cubes/cubes_search.json?code={symbol}&category=2&count={limit}&page=1"
+    url = f"https://xueqiu.com/query/v1/search/cube/stock.json?q={symbol}&count={limit}&page=1"
     meta = {"http_status": None, "source": "http", "login_required": False}
     try:
         r = sess.get(url, timeout=15)

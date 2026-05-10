@@ -473,6 +473,8 @@ def render_school_scores(syn: dict, panel: dict) -> str:
         bar_fill = max(0, min(100, cons))
         # v2.15.5 · 分量 tooltip：让鼠标悬停能看到"实分 x.x · 投票 y.y"
         tip = f"score_mean={score_mean:.1f} · vote_weighted={vote_cons:.1f} · 极化后 {cons:.1f}"
+        # v3.3.3 · PR #59 · Python 3.11 不允许 f-string 内嵌反斜杠 · 提取为独立变量
+        skip_display = f'· <span style="color:#9ca3af">—{skip}</span>' if skip else ''
         items.append(
             f'<div title="{tip}" style="background:{bg};border-radius:8px;padding:14px 16px;'
             f'border:1px solid rgba(0,0,0,0.05)">'
@@ -497,7 +499,7 @@ def render_school_scores(syn: dict, panel: dict) -> str:
             f'      <span style="color:#059669">📈{bull}</span> · '
             f'      <span style="color:#6b7280">⚖️{neu}</span> · '
             f'      <span style="color:#dc2626">📉{bear}</span>'
-            f'      {f"· <span style=\"color:#9ca3af\">—{skip}</span>" if skip else ""}'
+            f'      {skip_display}'
             f'    </div>'
             f'  </div>'
             f'</div>'
