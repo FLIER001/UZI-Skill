@@ -7,6 +7,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from lib.agent_analysis_validator import format_issues, validate
 from lib.cache import read_task_output, write_task_output
 from lib.market_router import parse_ticker
 
@@ -24,7 +25,8 @@ def _group_investors(panel: dict) -> dict:
     return groups
 
 
-def _run_one_group(client, system, gkey, glabel, investors, dims):
+def _run_one_group(client, system: str, gkey: str, glabel: str,
+                   investors: list, dims: dict) -> tuple:
     user = build_group_prompt(gkey, glabel, investors, dims)
     return gkey, client.chat_json(system, user)
 
@@ -86,19 +88,24 @@ def run_llm_review(ticker: str, cfg: LLMConfig,
         "dim_commentary": dim_commentary,
     }
 
-    # 综合调用（墙钟预算内）
-    if time.time() - t0 < cfg.max_wall_seconds:
-        try:
-            syn_user = build_synthesis_prompt(all_votes, dim_commentary, dims, panel)
-            syn = client.chat_json(system, syn_user)
-            for k in ("panel_insights", "great_divide_override", "narrative_override"):
-                if k in syn:
-                    agent_analysis[k] = syn[k]
-            print("   综合研判 ✓")
-        except LLMError as e:
-            print(f"   综合研判 ✗（仅写分组结果）: {e}")
+    # 综合调用（墙钟预算内）+ 一次 schema 自纠重试
+    if all_votes and time.time() - t0 < cfg.max_wall_seconds:
+        syn_user = build_synthesis_prompt(all_votes, dim_commentary, dims, panel)
+        syn = _synth_with_retry(client, system, syn_user, agent_analysis)
+        for k in ("panel_insights", "great_divide_override", "narrative_override"):
+            if k in syn:
+                agent_analysis[k] = syn[k]
+    elif not all_votes:
+        print("   ⚠️ 所有分组均失败 · 降级：不置 agent_reviewed（stage2 走骨架）")
+        agent_analysis["agent_reviewed"] = False
     else:
         print("   ⏱ 超墙钟预算，跳过综合研判")
+
+    # 最终 schema 校验：仍有 error → 降级（不阻塞报告）
+    errs = [i for i in validate(agent_analysis) if i.severity == "error"]
+    if errs:
+        print(f"   ⚠️ schema 仍有 {len(errs)} 条 error · 降级：不置 agent_reviewed")
+        agent_analysis["agent_reviewed"] = False
 
     _overwrite_panel(full, panel, all_votes)
     write_task_output(full, "agent_analysis", agent_analysis)
@@ -119,6 +126,34 @@ def _overwrite_panel(full: str, panel: dict, votes: list) -> None:
                             ("verdict", "verdict")):
             if v.get(vkey) not in (None, ""):
                 inv[field] = v[vkey]
-        changed = True
+                changed = True
     if changed:
         write_task_output(full, "panel", panel)
+
+
+def _synth_with_retry(client, system: str, syn_user: str, partial: dict) -> dict:
+    """综合调用 + 一次 schema 自纠重试。返回 syn dict（失败则 {}）。"""
+    try:
+        syn = client.chat_json(system, syn_user)
+    except LLMError as e:
+        print(f"   综合研判 ✗（仅写分组结果）: {e}")
+        return {}
+    trial = dict(partial)
+    for k in ("panel_insights", "great_divide_override", "narrative_override"):
+        if k in syn:
+            trial[k] = syn[k]
+    issues = [i for i in validate(trial) if i.severity == "error"]
+    if not issues:
+        print("   综合研判 ✓")
+        return syn
+    print(f"   ⚠️ 综合结果有 {len(issues)} 条 schema error · 自纠重试一次")
+    fix_user = (syn_user + "\n\n# schema 修复\n上一次输出有结构错误：\n"
+                + format_issues(issues)
+                + "\n请严格按要求重新输出完整 JSON。")
+    try:
+        syn2 = client.chat_json(system, fix_user)
+        print("   综合研判 ✓（重试后）")
+        return syn2
+    except LLMError as e:
+        print(f"   综合研判重试 ✗: {e}")
+        return syn

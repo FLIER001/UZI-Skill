@@ -117,3 +117,90 @@ def test_panel_investors_overwritten_from_votes(tmp_path, monkeypatch):
     buf = [i for i in panel["investors"] if i["investor_id"] == "buffett"][0]
     assert buf["headline"].startswith("LLM 覆盖")
     assert buf["score"] == 18
+
+
+class _BadThenGoodClient:
+    """第一次综合返回缺 risks 的坏结构，重试返回合规结构。"""
+    def __init__(self):
+        self.syn_calls = 0
+
+    def chat_json(self, system, user, attempts=3):
+        if "综合研判任务" in user or "schema 修复" in user:
+            self.syn_calls += 1
+            if self.syn_calls == 1:
+                return {"narrative_override": {"risks": "应该是list但给了字符串"}}
+            return {
+                "panel_insights": "重试后合规：多空分歧集中在 ROE 与估值，整体偏空。",
+                "great_divide_override": {
+                    "punchline": "ROE 5% 撑不起 25 倍 PE",
+                    "bull_say_rounds": ["a1", "a2", "a3"],
+                    "bear_say_rounds": ["b1", "b2", "b3"]},
+                "narrative_override": {
+                    "core_conclusion": "测试标的 35 分回避，安全边际不足。",
+                    "risks": ["r1", "r2", "r3"],
+                    "buy_zones": {k: {"price": 1.0, "rationale": "xxxxx"}
+                                  for k in ("value", "growth", "technical", "youzi")}},
+            }
+        return {"votes": [{"investor_id": "buffett", "signal": "bearish",
+                           "score": 18, "verdict": "回避",
+                           "headline": "h" * 25, "reasoning": "r" * 40,
+                           "persona_used": "flagship"}],
+                "dim_commentary": {"1_financials": "ROE 仅 5% 连续下滑回款承压明显啊啊。"}}
+
+
+class _RaisingClient:
+    def chat_json(self, system, user, attempts=3):
+        from lib.llm_panel.client import LLMError
+        raise LLMError("network down")
+
+
+def test_validation_error_triggers_one_retry(tmp_path, monkeypatch):
+    cache_mod = _seed_cache(tmp_path, monkeypatch)
+    from lib.llm_panel.config import LLMConfig
+    from lib.llm_panel.runner import run_llm_review
+    fc = _BadThenGoodClient()
+    run_llm_review(TICKER, cfg=LLMConfig("k", "b", "m", 0.4, 10, 300), client=fc)
+    aa = cache_mod.read_task_output(TICKER, "agent_analysis")
+    from lib.agent_analysis_validator import validate
+    assert [i for i in validate(aa) if i.severity == "error"] == []
+    assert fc.syn_calls == 2  # 恰好一次重试
+
+
+def test_all_groups_fail_still_writes_but_not_reviewed(tmp_path, monkeypatch):
+    cache_mod = _seed_cache(tmp_path, monkeypatch)
+    from lib.llm_panel.config import LLMConfig
+    from lib.llm_panel.runner import run_llm_review
+    ok = run_llm_review(TICKER, cfg=LLMConfig("k", "b", "m", 0.4, 10, 300),
+                        client=_RaisingClient())
+    assert ok is True
+    aa = cache_mod.read_task_output(TICKER, "agent_analysis")
+    # 全失败 → 不置 agent_reviewed:true，让 stage2 走骨架降级
+    assert aa.get("agent_reviewed") is not True
+
+
+def test_idempotent_skip_when_already_reviewed(tmp_path, monkeypatch):
+    cache_mod = _seed_cache(tmp_path, monkeypatch)
+    cache_mod.write_task_output(TICKER, "agent_analysis",
+                                {"agent_reviewed": True, "dim_commentary": {}})
+    from lib.llm_panel.config import LLMConfig
+    from lib.llm_panel.runner import run_llm_review
+
+    class _ShouldNotCall:
+        def chat_json(self, *a, **k):
+            raise AssertionError("不应调用 LLM")
+
+    ok = run_llm_review(TICKER, cfg=LLMConfig("k", "b", "m", 0.4, 10, 300),
+                        client=_ShouldNotCall(), resume=True)
+    assert ok is True
+
+
+def test_second_investor_also_overwritten(tmp_path, monkeypatch):
+    cache_mod = _seed_cache(tmp_path, monkeypatch)
+    from lib.llm_panel.config import LLMConfig
+    from lib.llm_panel.runner import run_llm_review
+    run_llm_review(TICKER, cfg=LLMConfig("k", "b", "m", 0.4, 10, 300),
+                   client=_FakeClient())
+    panel = cache_mod.read_task_output(TICKER, "panel")
+    bj = [i for i in panel["investors"] if i["investor_id"] == "bj_cj"][0]
+    assert bj["score"] == 18
+    assert bj["headline"].startswith("LLM 覆盖")
