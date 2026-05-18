@@ -475,6 +475,7 @@ cp .env.example .env
 51 评委 role-play，输出深度报告，不再需要切到 Claude/Codex：
 
 ```bash
+# 写入项目根目录的 .env（不是 shell export）
 UZI_LLM_API_KEY=sk-xxx
 UZI_LLM_MODEL=gpt-5.5            # 或 deepseek-chat / qwen-max ...
 # UZI_LLM_BASE_URL=https://api.deepseek.com/v1   # 非 OpenAI 端点时设置

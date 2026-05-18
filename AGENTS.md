@@ -99,16 +99,6 @@ UZI-Skill/                                  # ← 你 cwd 应该是这里
 
 **关键**：从 v2.10.4 起，`run.py` 直跑模式下 `agent_analysis.json` 缺失会自动降级为 warning，**不会 block HTML 生成**。不要为了"跑一个完整流程"强行 role-play 51 评委——那是用户要求"深度"时才需要。
 
-### 路径 C · CLI 内置 LLM（v3.5 · 无 agent 工具）
-
-`.env` 配了 `UZI_LLM_API_KEY` + `UZI_LLM_MODEL` 时，`stage2()` 入口的
-`maybe_run_llm_review` 会自动用该模型分组 role-play 51 评委并写
-`agent_analysis.json`，然后 stage2 照常 merge。对 agent 透明：
-- 你（Claude/Codex）若已介入并写了 `agent_analysis.json`（`agent_reviewed:true`），
-  LLM 步骤幂等跳过，不覆盖你的成果。
-- 未配置 `UZI_LLM_*` 时此步骤完全不触发，行为与今天一致。
-- 范围仅判断综合（A），不做 `qualitative_deep_dive`。
-
 ### 路径 A · CLI 直跑（快速）
 
 ```bash
@@ -122,6 +112,16 @@ python3 run.py <ticker> --depth medium --no-browser  # 默认完整度
 3. 调 stage2 组装 HTML 报告
 
 **你只需**：读最终 HTML / synthesis.json，向用户汇报核心结论。**不需要** role-play 51 评委。
+
+### 路径 A 变体 · CLI 内置 LLM（v3.5 · 无 agent 工具）
+
+`.env` 配了 `UZI_LLM_API_KEY` + `UZI_LLM_MODEL` 时，`stage2()` 入口的
+`maybe_run_llm_review` 会自动用该模型分组 role-play 51 评委并写
+`agent_analysis.json`，然后 stage2 照常 merge。对 agent 透明：
+- 你（Claude/Codex）若已介入并写了 `agent_analysis.json`（`agent_reviewed:true`），
+  LLM 步骤幂等跳过，不覆盖你的成果。
+- 未配置 `UZI_LLM_*` 时此步骤完全不触发，行为与今天一致。
+- 范围仅判断综合，不做 `qualitative_deep_dive`。
 
 ### 路径 B · 全量 agent 流程（深度）
 
