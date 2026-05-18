@@ -204,3 +204,27 @@ def test_second_investor_also_overwritten(tmp_path, monkeypatch):
     bj = [i for i in panel["investors"] if i["investor_id"] == "bj_cj"][0]
     assert bj["score"] == 18
     assert bj["headline"].startswith("LLM 覆盖")
+
+
+class _AlwaysBadSynthClient:
+    """分组正常，但综合调用两次都返回非法结构（risks 为字符串）。"""
+    def chat_json(self, system, user, attempts=3):
+        if "综合研判任务" in user:
+            return {"narrative_override": {"risks": "still a string, invalid"}}
+        return {"votes": [{"investor_id": "buffett", "signal": "bearish",
+                           "score": 18, "verdict": "回避",
+                           "headline": "h" * 25, "reasoning": "r" * 40,
+                           "persona_used": "flagship"}],
+                "dim_commentary": {"1_financials": "ROE 仅 5% 连续下滑回款承压明显啊啊。"}}
+
+
+def test_retry_still_bad_degrades_not_reviewed(tmp_path, monkeypatch):
+    cache_mod = _seed_cache(tmp_path, monkeypatch)
+    from lib.llm_panel.config import LLMConfig
+    from lib.llm_panel.runner import run_llm_review
+    ok = run_llm_review(TICKER, cfg=LLMConfig("k", "b", "m", 0.4, 10, 300),
+                        client=_AlwaysBadSynthClient())
+    assert ok is True
+    aa = cache_mod.read_task_output(TICKER, "agent_analysis")
+    # 综合两次都非法 → 最终校验仍有 error → 必须降级，绝不能写 agent_reviewed:true
+    assert aa.get("agent_reviewed") is not True

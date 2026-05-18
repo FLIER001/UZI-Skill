@@ -155,5 +155,5 @@ def _synth_with_retry(client, system: str, syn_user: str, partial: dict) -> dict
         print("   综合研判 ✓（重试后）")
         return syn2
     except LLMError as e:
-        print(f"   综合研判重试 ✗: {e}")
+        print(f"   综合研判重试 ✗，将用原始结果，最终校验若仍有 error 则自动降级: {e}")
         return syn
