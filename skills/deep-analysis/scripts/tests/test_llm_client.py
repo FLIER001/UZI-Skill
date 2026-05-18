@@ -82,9 +82,22 @@ def test_auth_error_no_retry(monkeypatch):
 def test_non_json_raises(monkeypatch):
     from lib.llm_panel import client as mod
     monkeypatch.setattr(mod.time, "sleep", lambda *_: None)
-    fake = _FakeRequests([_ok_resp("totally not json"),
-                          _ok_resp("still not json"),
-                          _ok_resp("nope")])
+    fake = _FakeRequests([_ok_resp("totally not json")])  # 1 response — LLMError not retried
     monkeypatch.setattr(mod, "requests", fake)
     with pytest.raises(mod.LLMError):
         mod.LLMClient(_cfg()).chat_json("s", "u")
+    assert len(fake.calls) == 1  # parse errors propagate immediately, no retry
+
+
+def test_400_drops_json_mode_and_retries(monkeypatch):
+    from lib.llm_panel import client as mod
+    monkeypatch.setattr(mod.time, "sleep", lambda *_: None)
+    fake = _FakeRequests([
+        _FakeResp(400, text="response_format not supported"),
+        _ok_resp('{"b": 3}'),
+    ])
+    monkeypatch.setattr(mod, "requests", fake)
+    result = mod.LLMClient(_cfg()).chat_json("s", "u")
+    assert result == {"b": 3}
+    assert len(fake.calls) == 2
+    assert "response_format" not in fake.calls[1]["json"]
