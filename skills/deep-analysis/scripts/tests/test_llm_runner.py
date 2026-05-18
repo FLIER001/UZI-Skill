@@ -228,3 +228,26 @@ def test_retry_still_bad_degrades_not_reviewed(tmp_path, monkeypatch):
     aa = cache_mod.read_task_output(TICKER, "agent_analysis")
     # 综合两次都非法 → 最终校验仍有 error → 必须降级，绝不能写 agent_reviewed:true
     assert aa.get("agent_reviewed") is not True
+
+
+def test_maybe_run_no_config_returns_false(tmp_path, monkeypatch):
+    _seed_cache(tmp_path, monkeypatch)
+    for k in ("UZI_LLM_API_KEY", "UZI_LLM_MODEL", "UZI_NO_LLM"):
+        monkeypatch.delenv(k, raising=False)
+    from lib.llm_panel import maybe_run_llm_review
+    assert maybe_run_llm_review(TICKER) is False
+
+
+def test_maybe_run_never_raises(tmp_path, monkeypatch):
+    _seed_cache(tmp_path, monkeypatch)
+    monkeypatch.setenv("UZI_LLM_API_KEY", "k")
+    monkeypatch.setenv("UZI_LLM_MODEL", "m")
+    # runner 内部强制抛非 LLMError 异常，验证边界吞掉
+    import lib.llm_panel.runner as rmod
+
+    def _boom(*a, **k):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(rmod, "run_llm_review", _boom)
+    from lib.llm_panel import maybe_run_llm_review
+    assert maybe_run_llm_review(TICKER) is False  # 不抛，返回 False
