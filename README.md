@@ -469,6 +469,21 @@ cp .env.example .env
 
 无 key 时全部回退到 XueQiu/akshare 链，现有用户零感知。
 
+### 纯 CLI 全流程（无需 Claude/Codex · v3.5）
+
+在 `.env` 配置一个 OpenAI 兼容模型即可让 `python run.py <ticker>` 自动完成
+51 评委 role-play，输出深度报告，不再需要切到 Claude/Codex：
+
+```bash
+UZI_LLM_API_KEY=sk-xxx
+UZI_LLM_MODEL=gpt-5.5            # 或 deepseek-chat / qwen-max ...
+# UZI_LLM_BASE_URL=https://api.deepseek.com/v1   # 非 OpenAI 端点时设置
+```
+
+未配置时行为与之前完全一致（脚本骨架模式）。`UZI_NO_LLM=1` 可临时禁用。
+当前范围：基于已采集数据做判断综合，不做联网调研（`qualitative_deep_dive`
+留空，CLI 模式仅 warning）。
+
 ### 🔓 需登录的数据源（v2.7.1 新增）
 
 部分数据源 2026 年起加了登录鉴权，UZI-Skill 默认**不主动弹登录窗**（保持无人值守）。

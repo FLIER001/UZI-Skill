@@ -545,6 +545,15 @@ python run.py <股票> --no-browser
 ```
 这会 stage1 + stage2 一把跑完，不做 agent 分析。速度快但评委判断全是规则引擎的机械输出。
 
+### CLI 内置 LLM 模式（v3.5）
+
+配置 `.env` 的 `UZI_LLM_API_KEY` + `UZI_LLM_MODEL` 后，CLI 直跑会在
+stage1 与 stage2 之间自动调用该 OpenAI 兼容模型生成 `agent_analysis.json`
+（分组 role-play 7 派系 + 1 次综合），实现无 Claude/Codex 的端到端深度分析。
+幂等：若已存在 `agent_reviewed:true` 的 `agent_analysis.json` 则跳过。
+范围：仅判断综合，不做联网 `qualitative_deep_dive`（CLI 模式仅 warning）。
+配置项见仓库根 `.env.example`。
+
 ---
 
 ## 🚀 详细流程（run.py 跑完后的人工审查）
