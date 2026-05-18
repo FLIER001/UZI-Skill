@@ -637,6 +637,14 @@ def stage2(ticker: str) -> str:
     agent_analysis.json 的字段会合并进 synthesis，优先级高于脚本生成。
     返回报告路径。
     """
+    # v3.5 · CLI 内置 LLM 评审单点 hook（pipeline + 全部 legacy 路径唯一汇合点）
+    # 未配置 UZI_LLM_* / 已有 reviewed 结果 / 任何异常 → 立即返回，stage2 行为不变
+    try:
+        from lib.llm_panel import maybe_run_llm_review
+        maybe_run_llm_review(ticker)
+    except Exception as _llm_e:  # 双保险：边界已吞，这里再兜一层
+        print(f"⚠️  LLM hook 跳过: {type(_llm_e).__name__}: {str(_llm_e)[:120]}")
+
     from lib.cache import read_task_output
     ti = parse_ticker(ticker)
 

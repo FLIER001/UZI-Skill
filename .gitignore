@@ -52,3 +52,7 @@ docs/*.local.md
 
 # v2.10.2 · prewarm_cache 生成的预热数据（release 附件，不进 repo）
 skills/deep-analysis/scripts/prewarm/
+
+# pytest coverage artifact（本地生成，不进 repo）
+.coverage
+skills/deep-analysis/scripts/.coverage
