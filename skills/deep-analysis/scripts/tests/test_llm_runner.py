@@ -282,3 +282,34 @@ def test_maybe_run_configured_success_returns_true(tmp_path, monkeypatch):
     monkeypatch.setattr(rmod, "run_llm_review", lambda *a, **k: True)
     from lib.llm_panel import maybe_run_llm_review
     assert maybe_run_llm_review(TICKER) is True
+
+
+class _SynthRaisesOnRetryClient:
+    """分组正常；综合首调返回非法结构触发重试，重试调用抛 LLMError。"""
+    def __init__(self):
+        self.syn_calls = 0
+
+    def chat_json(self, system, user, attempts=3):
+        if "综合研判任务" in user or "schema 修复" in user:
+            self.syn_calls += 1
+            if self.syn_calls == 1:
+                return {"narrative_override": {"risks": "invalid string"}}
+            from lib.llm_panel.client import LLMError
+            raise LLMError("retry network down")
+        return {"votes": [{"investor_id": "buffett", "signal": "bearish",
+                           "score": 18, "verdict": "回避", "headline": "h" * 25,
+                           "reasoning": "r" * 40, "persona_used": "flagship"}],
+                "dim_commentary": {"1_financials": "ROE 仅 5% 连续下滑回款承压明显啊。"}}
+
+
+def test_synth_retry_raises_falls_back_and_degrades(tmp_path, monkeypatch):
+    cache_mod = _seed_cache(tmp_path, monkeypatch)
+    from lib.llm_panel.config import LLMConfig
+    from lib.llm_panel.runner import run_llm_review
+    fc = _SynthRaisesOnRetryClient()
+    ok = run_llm_review(TICKER, cfg=LLMConfig("k", "b", "m", 0.4, 10, 300), client=fc)
+    assert ok is True
+    assert fc.syn_calls == 2  # 首调 + 重试（重试抛错）
+    aa = cache_mod.read_task_output(TICKER, "agent_analysis")
+    # 重试抛错 → 返回原始非法 syn → 最终校验仍 error → 降级，绝不写 agent_reviewed:true
+    assert aa.get("agent_reviewed") is not True

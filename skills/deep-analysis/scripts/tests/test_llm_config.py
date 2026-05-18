@@ -81,3 +81,14 @@ def test_whitespace_only_key_returns_none(monkeypatch):
     monkeypatch.setenv("UZI_LLM_MODEL", "gpt-5.5")
     from lib.llm_panel.config import load_config
     assert load_config() is None
+
+
+def test_repr_masks_api_key(monkeypatch):
+    _clear(monkeypatch)
+    monkeypatch.setenv("UZI_LLM_API_KEY", "sk-supersecretvalue123")
+    monkeypatch.setenv("UZI_LLM_MODEL", "gpt-5.5")
+    from lib.llm_panel.config import load_config
+    r = repr(load_config())
+    assert "supersecret" not in r
+    assert "sk-sup…" in r
+    assert "gpt-5.5" in r  # non-secret fields still visible

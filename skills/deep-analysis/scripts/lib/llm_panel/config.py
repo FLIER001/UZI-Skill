@@ -18,6 +18,12 @@ class LLMConfig:
     timeout: int
     max_wall_seconds: int
 
+    def __repr__(self) -> str:
+        masked = (self.api_key[:6] + "…") if self.api_key else ""
+        return (f"LLMConfig(api_key='{masked}', base_url='{self.base_url}', "
+                f"model='{self.model}', temperature={self.temperature}, "
+                f"timeout={self.timeout}, max_wall_seconds={self.max_wall_seconds})")
+
 
 def _get_float(name: str, default: float) -> float:
     raw = os.environ.get(name)
