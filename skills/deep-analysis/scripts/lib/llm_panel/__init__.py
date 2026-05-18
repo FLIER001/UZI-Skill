@@ -18,7 +18,9 @@ def maybe_run_llm_review(ticker: str) -> bool:
         from .config import load_config
         cfg = load_config()
         if cfg is None:
-            if os.environ.get("UZI_LLM_API_KEY") and not os.environ.get("UZI_LLM_MODEL"):
+            if os.environ.get("UZI_NO_LLM") == "1":
+                print("ℹ️  UZI_NO_LLM=1 · 跳过 LLM 评审（kill switch）")
+            elif os.environ.get("UZI_LLM_API_KEY") and not os.environ.get("UZI_LLM_MODEL"):
                 print("ℹ️  已设 UZI_LLM_API_KEY 但缺 UZI_LLM_MODEL · 跳过 LLM 评审")
             else:
                 print("ℹ️  未配置 UZI_LLM_* · 跳过 LLM 评审（脚本骨架模式）")

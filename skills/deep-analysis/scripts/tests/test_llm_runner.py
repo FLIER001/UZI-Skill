@@ -251,3 +251,34 @@ def test_maybe_run_never_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(rmod, "run_llm_review", _boom)
     from lib.llm_panel import maybe_run_llm_review
     assert maybe_run_llm_review(TICKER) is False  # 不抛，返回 False
+
+
+def test_maybe_run_hint_key_without_model(tmp_path, monkeypatch, capsys):
+    _seed_cache(tmp_path, monkeypatch)
+    monkeypatch.setenv("UZI_LLM_API_KEY", "sk-xxx")
+    monkeypatch.delenv("UZI_LLM_MODEL", raising=False)
+    monkeypatch.delenv("UZI_NO_LLM", raising=False)
+    from lib.llm_panel import maybe_run_llm_review
+    assert maybe_run_llm_review(TICKER) is False
+    assert "缺 UZI_LLM_MODEL" in capsys.readouterr().out
+
+
+def test_maybe_run_kill_switch_message(tmp_path, monkeypatch, capsys):
+    _seed_cache(tmp_path, monkeypatch)
+    monkeypatch.setenv("UZI_LLM_API_KEY", "sk-xxx")
+    monkeypatch.setenv("UZI_LLM_MODEL", "gpt-5.5")
+    monkeypatch.setenv("UZI_NO_LLM", "1")
+    from lib.llm_panel import maybe_run_llm_review
+    assert maybe_run_llm_review(TICKER) is False
+    assert "kill switch" in capsys.readouterr().out
+
+
+def test_maybe_run_configured_success_returns_true(tmp_path, monkeypatch):
+    _seed_cache(tmp_path, monkeypatch)
+    monkeypatch.setenv("UZI_LLM_API_KEY", "k")
+    monkeypatch.setenv("UZI_LLM_MODEL", "gpt-5.5")
+    monkeypatch.delenv("UZI_NO_LLM", raising=False)
+    import lib.llm_panel.runner as rmod
+    monkeypatch.setattr(rmod, "run_llm_review", lambda *a, **k: True)
+    from lib.llm_panel import maybe_run_llm_review
+    assert maybe_run_llm_review(TICKER) is True
