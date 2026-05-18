@@ -23,6 +23,7 @@ def build_market_snapshot(ticker: str, dims: dict, panel: dict) -> str:
             g: {"label": v.get("label"), "verdict": v.get("verdict"),
                 "avg_score": v.get("avg_score")}
             for g, v in (panel.get("school_scores") or {}).items()
+            if isinstance(v, dict)
         },
     }
     return json.dumps(snap, ensure_ascii=False, sort_keys=True, indent=2)
@@ -102,12 +103,12 @@ def build_synthesis_prompt(all_votes: list, dim_commentary: dict,
         tally[s] = tally.get(s, 0) + 1
     votes_summary = json.dumps(
         [{"id": v.get("investor_id"), "signal": v.get("signal"),
-          "score": v.get("score"), "headline": v.get("headline", "")[:60]}
+          "score": v.get("score"), "headline": (v.get("headline") or "")[:60]}
          for v in all_votes], ensure_ascii=False)
     school = json.dumps(panel.get("school_scores") or {}, ensure_ascii=False)
     return f"""# 综合研判任务
 
-这是 51 评委 role-play 后的全部投票（signal 计票：{tally}）：
+这是 51 评委 role-play 后的全部投票（signal 计票：{json.dumps(tally, ensure_ascii=False)}）：
 {votes_summary}
 
 各派系骨架共识：{school}

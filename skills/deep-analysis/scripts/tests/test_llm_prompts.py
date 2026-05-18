@@ -67,3 +67,24 @@ def test_synthesis_prompt_has_required_output_keys():
     for key in ("panel_insights", "great_divide_override",
                 "narrative_override", "buy_zones", "value", "youzi"):
         assert key in s
+
+
+def test_synthesis_prompt_headline_none_safe():
+    from lib.llm_panel.prompts import build_synthesis_prompt
+    votes = [{"investor_id": "x", "signal": "bearish", "score": 10, "headline": None}]
+    s = build_synthesis_prompt(votes, {}, {"fundamental_score": 30}, {})
+    assert "x" in s  # no crash
+
+
+def test_market_snapshot_ignores_non_dict_school_scores():
+    import json
+    from lib.llm_panel.prompts import build_market_snapshot
+    panel = {"school_scores": {"A": "corrupt_value"}}
+    obj = json.loads(build_market_snapshot("X", {}, panel))
+    assert obj["school_scores"] == {}
+
+
+def test_group_prompt_empty_investors():
+    from lib.llm_panel.prompts import build_group_prompt
+    p = build_group_prompt("Z", "empty", [], {})
+    assert "0 位" in p  # degrades gracefully, no crash
