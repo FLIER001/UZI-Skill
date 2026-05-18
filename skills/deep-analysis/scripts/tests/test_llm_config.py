@@ -73,3 +73,11 @@ def test_bad_numeric_falls_back_to_default(monkeypatch):
     monkeypatch.setenv("UZI_LLM_TEMPERATURE", "not-a-number")
     from lib.llm_panel.config import load_config
     assert load_config().temperature == 0.4
+
+
+def test_whitespace_only_key_returns_none(monkeypatch):
+    _clear(monkeypatch)
+    monkeypatch.setenv("UZI_LLM_API_KEY", "   ")
+    monkeypatch.setenv("UZI_LLM_MODEL", "gpt-5.5")
+    from lib.llm_panel.config import load_config
+    assert load_config() is None

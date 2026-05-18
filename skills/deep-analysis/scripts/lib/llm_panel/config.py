@@ -39,7 +39,7 @@ def _get_int(name: str, default: int) -> int:
         return default
 
 
-def load_config() -> "LLMConfig | None":
+def load_config() -> LLMConfig | None:
     """Return LLMConfig when UZI_LLM_API_KEY + UZI_LLM_MODEL set and
     UZI_NO_LLM != '1'; otherwise None (feature off)."""
     if os.environ.get("UZI_NO_LLM") == "1":
